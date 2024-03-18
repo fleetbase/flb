@@ -109,7 +109,7 @@ function onAfterPublishComposer(packagePath) {
 
 const defaultRegistry = 'http://localhost:4873';
 
-program.name('flb-cli').description('CLI tool for managing Fleetbase Extensions').version(`${packageJson.name} ${packageJson.version}`, '-v, --version', 'Output the current version');
+program.name('flb').description('CLI tool for managing Fleetbase Extensions').version(`${packageJson.name} ${packageJson.version}`, '-v, --version', 'Output the current version');
 program.option('-r, --registry [url]', 'Specify a fleetbase extension repository', defaultRegistry);
 
 program
