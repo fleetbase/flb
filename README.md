@@ -14,7 +14,7 @@ FLB (Fleetbase) is a command-line interface tool designed for managing Fleetbase
 To install FLB, run the following command:
 
 ```bash
-npm install -g flb
+npm install -g @fleetbase/cli
 ```
 
 ## Usage
