@@ -54,7 +54,7 @@ To setup registry auth use:
 flb set-auth [token] --path /fleetbase
 ```
 
-- `--path`: (Optional) The path to the fleetbase instance directory. Defaults to the current directory.
+- `-p, --path`: (Optional) The path to the fleetbase instance directory. Defaults to the current directory.
 
 ### Scaffolding a Extension
 
@@ -84,7 +84,7 @@ flb install [extension] --path /fleetbase
 ```
 
 - `[extension]`: The name of the extension to install.
-- `--path`: (Optional) The path to the fleetbase instance directory. Defaults to the current directory.
+- `-p, --path`: (Optional) The path to the fleetbase instance directory. Defaults to the current directory.
 
 ### Uninstalling a Extension
 
@@ -95,7 +95,7 @@ flb uninstall [extension] --path /fleetbase
 ```
 
 - `[extension]`: The name of the extension to install.
-- `--path`: (Optional) The path to the fleetbase instance directory. Defaults to the current directory.
+- `-p, --path`: (Optional) The path to the fleetbase instance directory. Defaults to the current directory.
 
 ### Setting a Custom Registry
 
