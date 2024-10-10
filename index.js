@@ -6,11 +6,16 @@ const { prompt } = require('enquirer');
 const fs = require('fs-extra');
 const path = require('path');
 const axios = require('axios');
+const tar = require('tar');
+const semver = require('semver');
+const glob = require('glob-promise');
+const FormData = require('form-data');
 const _ = require('lodash');
 const packageJson = require('./package.json');
 const maxBuffer = 1024 * 1024 * 50; // 50MB
 const defaultRegistry = 'https://registry.fleetbase.io';
 const packageLookupApi = 'https://api.fleetbase.io/~registry/v1/lookup';
+const bundleUploadApi = 'https://api.fleetbase.io/~registry/v1/bundle-upload';
 const starterExtensionRepo = 'https://github.com/fleetbase/starter-extension.git';
 
 function publishPackage (packagePath, registry, options = {}) {
@@ -513,6 +518,234 @@ function runCommand (command, workingDirectory) {
     });
 }
 
+// Function to bundle the extension
+async function bundleExtension (options) {
+    const extensionPath = options.path || '.';
+    const upload = options.upload;
+    try {
+        // Check if extension.json exists in the specified directory
+        const extensionJsonPath = path.join(extensionPath, 'extension.json');
+        if (!(await fs.pathExists(extensionJsonPath))) {
+            console.error(`extension.json not found in ${extensionPath}`);
+            process.exit(1);
+        }
+        // Read extension.json
+        const extensionJson = await fs.readJson(extensionJsonPath);
+        const name = extensionJson.name;
+        const version = extensionJson.version;
+
+        if (!name || !version) {
+            console.error('Name or version not specified in extension.json');
+            process.exit(1);
+        }
+        // Build the bundle filename
+        const nameDasherized = _.kebabCase(name.replace('@', ''));
+        const bundleFilename = `${nameDasherized}-v${version}-bundle.tar.gz`;
+        const bundlePath = path.join(extensionPath, bundleFilename);
+
+        // Exclude directories
+        const excludeDirs = ['node_modules', 'server_vendor'];
+
+        console.log(`Creating bundle ${bundleFilename}...`);
+
+        await tar.c(
+            {
+                gzip: true,
+                file: bundlePath,
+                cwd: extensionPath,
+                filter: (filePath, stat) => {
+                    // Exclude specified directories and the bundle file itself
+                    const relativePath = path.relative(extensionPath, filePath);
+
+                    // Exclude directories
+                    if (excludeDirs.some(dir => relativePath.startsWith(dir + path.sep))) {
+                        return false; // exclude
+                    }
+
+                    // Exclude the bundle file
+                    if (relativePath === bundleFilename) {
+                        return false; // exclude
+                    }
+
+                    // Exclude any existing bundle files matching the pattern
+                    if (relativePath.match(/-v\d+\.\d+\.\d+(-[\w\.]+)?-bundle\.tar\.gz$/)) {
+                        return false; // exclude
+                    }
+
+                    return true; // include
+                },
+            },
+            ['.']
+        );
+
+        console.log(`Bundle created at ${bundlePath}`);
+
+        if (upload) {
+            // Call upload function with the bundle path
+            await uploadBundle(bundlePath, options);
+        }
+    } catch (error) {
+        console.error(`Error bundling extension: ${error.message}`);
+        process.exit(1);
+    }
+}
+
+// Function to upload the bundle
+async function uploadBundle (bundlePath, options) {
+    const registry = options.registry || defaultRegistry;
+    const uploadUrl = bundleUploadApi;
+
+    let authToken = options.authToken;
+    if (!authToken) {
+        // Try to get auth token from ~/.npmrc
+        authToken = await getAuthToken(registry);
+        if (!authToken) {
+            console.error(`Auth token not found for registry ${registry}. Please provide an auth token using the --auth-token option.`);
+            process.exit(1);
+        }
+    }
+
+    try {
+        const form = new FormData();
+        form.append('bundle', fs.createReadStream(bundlePath));
+
+        const response = await axios.post(uploadUrl, form, {
+            headers: {
+                ...form.getHeaders(),
+                Authorization: `Bearer ${authToken}`,
+            },
+            maxContentLength: Infinity,
+            maxBodyLength: Infinity,
+        });
+
+        console.log(`Bundle uploaded successfully: ${response.data.message}`);
+    } catch (error) {
+        console.log(error.response.data);
+        console.error(`Error uploading bundle: ${error.response.data?.error ?? error.message}`);
+        process.exit(1);
+    }
+}
+
+// Function to get the auth token from .npmrc
+async function getAuthToken (registryUrl) {
+    const npmrcPath = path.join(require('os').homedir(), '.npmrc');
+    if (!(await fs.pathExists(npmrcPath))) {
+        return null;
+    }
+
+    const npmrcContent = await fs.readFile(npmrcPath, 'utf-8');
+    const lines = npmrcContent.split('\n');
+
+    const registryHost = new URL(registryUrl).host;
+
+    // Look for line matching //registry.fleetbase.io/:_authToken=...
+    for (const line of lines) {
+        const match = line.match(new RegExp(`^//${registryHost}/:_authToken=(.*)$`));
+        if (match) {
+            return match[1].replace(/^"|"$/g, ''); // Remove quotes if present
+        }
+    }
+
+    return null;
+}
+
+// Function to find the latest bundle
+async function findLatestBundle (directory) {
+    const pattern = '*-v*-bundle.tar.gz';
+    const files = await glob(pattern, { cwd: directory });
+    if (files.length === 0) {
+        return null;
+    }
+    // Extract version numbers and sort
+    const bundles = files
+        .map(file => {
+            const match = file.match(/-v(\d+\.\d+\.\d+(-[\w\.]+)?)-bundle\.tar\.gz$/);
+            if (match) {
+                const version = match[1];
+                return { file, version };
+            }
+            return null;
+        })
+        .filter(Boolean);
+
+    if (bundles.length === 0) {
+        return null;
+    }
+
+    // Sort by version
+    bundles.sort((a, b) => semver.compare(b.version, a.version));
+    return bundles[0].file;
+}
+
+// Command to handle the upload
+async function uploadCommand (bundleFile, options) {
+    const directory = options.path || '.';
+    const registry = options.registry || defaultRegistry;
+    const authToken = options.authToken;
+
+    if (!bundleFile) {
+        bundleFile = await findLatestBundle(directory);
+        if (!bundleFile) {
+            console.error('No bundle file found in the current directory.');
+            process.exit(1);
+        }
+    }
+
+    const bundlePath = path.join(directory, bundleFile);
+
+    await uploadBundle(bundlePath, { registry, authToken });
+}
+
+// Function to bump the version
+async function versionBump (options) {
+    const extensionPath = options.path || '.';
+    const releaseType = options.major ? 'major' : options.minor ? 'minor' : options.patch ? 'patch' : 'patch';
+    const preRelease = options.preRelease;
+
+    const files = ['extension.json', 'package.json', 'composer.json'];
+    for (const file of files) {
+        const filePath = path.join(extensionPath, file);
+        if (await fs.pathExists(filePath)) {
+            const content = await fs.readJson(filePath);
+            if (content.version) {
+                let newVersion = semver.inc(content.version, releaseType, preRelease);
+                if (!newVersion) {
+                    console.error(`Invalid version in ${file}: ${content.version}`);
+                    continue;
+                }
+                content.version = newVersion;
+                await fs.writeJson(filePath, content, { spaces: 4 });
+                console.log(`Updated ${file} to version ${newVersion}`);
+            }
+        }
+    }
+}
+
+// Command to handle login
+function loginCommand (options) {
+    const npmLogin = require('npm-cli-login');
+    const username = options.username;
+    const password = options.password;
+    const email = options.email;
+    const registry = options.registry || defaultRegistry;
+    const scope = options.scope || '';
+    const quotes = options.quotes || '';
+    const configPath = options.configPath || '';
+
+    if (!username || !password || !email) {
+        console.error('Username, password, and email are required for login.');
+        process.exit(1);
+    }
+
+    try {
+        npmLogin(username, password, email, registry, scope, quotes, configPath);
+        console.log(`Logged in to registry ${registry}`);
+    } catch (error) {
+        console.error(`Error during login: ${error.message}`);
+        process.exit(1);
+    }
+}
+
 program.name('flb').description('CLI tool for managing Fleetbase Extensions').version(`${packageJson.name} ${packageJson.version}`, '-v, --version', 'Output the current version');
 program.option('-r, --registry [url]', 'Specify a fleetbase extension repository', defaultRegistry);
 
@@ -615,5 +848,43 @@ program
     .action(() => {
         console.log(`${packageJson.name} ${packageJson.version}`);
     });
+
+program
+    .command('bundle')
+    .description('Bundle the Fleetbase extension into a tar.gz file')
+    .option('-p, --path <path>', 'Path of the Fleetbase extension to bundle', '.')
+    .option('-u, --upload', 'Upload the created bundle after bundling')
+    .option('--auth-token <token>', 'Auth token for uploading the bundle')
+    .action(bundleExtension);
+
+program
+    .command('bundle-upload [bundleFile]')
+    .alias('upload-bundle')
+    .description('Upload a Fleetbase extension bundle')
+    .option('-p, --path <path>', 'Path where the bundle is located', '.')
+    .option('--auth-token <token>', 'Auth token for uploading the bundle')
+    .action(uploadCommand);
+
+program
+    .command('version-bump')
+    .description('Bump the version of the Fleetbase extension')
+    .option('-p, --path <path>', 'Path of the Fleetbase extension', '.')
+    .option('--major', 'Bump major version')
+    .option('--minor', 'Bump minor version')
+    .option('--patch', 'Bump patch version')
+    .option('--pre-release [identifier]', 'Add pre-release identifier')
+    .action(versionBump);
+
+program
+    .command('login')
+    .description('Log in to the Fleetbase registry')
+    .option('-u, --username <username>', 'Username for the registry')
+    .option('-p, --password <password>', 'Password for the registry')
+    .option('-e, --email <email>', 'Email associated with your account')
+    .option('-r, --registry <registry>', 'Registry URL', defaultRegistry)
+    .option('--scope <scope>', 'Scope for the registry')
+    .option('--quotes <quotes>', 'Quotes option for npm-cli-login')
+    .option('--config-path <configPath>', 'Path to the npm config file')
+    .action(loginCommand);
 
 program.parse(process.argv);

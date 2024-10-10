@@ -1,6 +1,6 @@
 {
     "name": "@fleetbase/cli",
-    "version": "0.0.2",
+    "version": "0.0.3",
     "description": "CLI tool for managing Fleetbase Extensions",
     "repository": "https://github.com/fleetbase/fleetbase",
     "license": "AGPL-3.0-or-later",
@@ -22,7 +22,12 @@
         "chalk": "^5.3.0",
         "commander": "^11.1.0",
         "enquirer": "^2.4.1",
+        "form-data": "^4.0.1",
         "fs-extra": "^11.2.0",
-        "lodash": "^4.17.21"
+        "glob-promise": "^6.0.7",
+        "lodash": "^4.17.21",
+        "npm-cli-login": "^1.0.0",
+        "semver": "^7.6.3",
+        "tar": "^7.4.3"
     }
 }
