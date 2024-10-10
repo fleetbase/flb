@@ -15,8 +15,7 @@ const packageJson = require('./package.json');
 const maxBuffer = 1024 * 1024 * 50; // 50MB
 const defaultRegistry = 'https://registry.fleetbase.io';
 const packageLookupApi = 'https://api.fleetbase.io/~registry/v1/lookup';
-const bundleUploadApi = 'http://localhost:8000/~registry/v1/bundle-upload';
-// const bundleUploadApi = 'https://api.fleetbase.io/~registry/v1/bundle-upload';
+const bundleUploadApi = 'https://api.fleetbase.io/~registry/v1/bundle-upload';
 const starterExtensionRepo = 'https://github.com/fleetbase/starter-extension.git';
 
 function publishPackage (packagePath, registry, options = {}) {
